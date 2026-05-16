@@ -28,8 +28,8 @@
 - [ ] Backend uses `SUPABASE_SERVICE_ROLE_KEY` (bypasses RLS) — ensure this key is **never** exposed to the frontend.
 
 ## 4. AI & Vector Matching Logic
-- [ ] Create the `match_mentors_to_startup` Postgres Stored Procedure using Cosine Distance (`<=>`).
-- [ ] Wire up `POST /api/ai/match` endpoint in `backend/routers/ai.py`:
+- [x] Create the `match_mentors_to_startup` Postgres Stored Procedure using Cosine Distance (`<=>`).
+- [x] Wire up `POST /api/ai/match` endpoint in `backend/routers/ai.py`:
   - Receives startup needs text.
   - Generates embedding via OpenAI `text-embedding-ada-002`.
   - Calls the Supabase RPC stored procedure.

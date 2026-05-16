@@ -76,7 +76,7 @@ CREATE TABLE startups (
     verification_status VARCHAR(50) DEFAULT 'Pending',
     growth_metrics JSONB,
     total_funding NUMERIC(15, 2),
-    needs_embedding vector(1536) -- Crucial for pgvector matching
+    needs_embedding vector(768) -- Crucial for pgvector matching
 );
 
 CREATE TABLE mentors (
@@ -86,7 +86,7 @@ CREATE TABLE mentors (
     bio TEXT,
     years_experience INTEGER,
     avg_success_score NUMERIC(5, 2) DEFAULT 0.0, -- AI calculated based on linkage health
-    skills_embedding vector(1536) -- Crucial for pgvector matching
+    skills_embedding vector(768) -- Crucial for pgvector matching
 );
 
 CREATE TABLE partners (
@@ -243,7 +243,7 @@ To find the best mentor for a startup, we use **Cosine Distance** (`<=>`). We cr
 
 ```sql
 CREATE OR REPLACE FUNCTION match_mentors_to_startup(
-    query_embedding vector(1536),
+    query_embedding vector(768),
     match_threshold float,
     match_count int
 )
