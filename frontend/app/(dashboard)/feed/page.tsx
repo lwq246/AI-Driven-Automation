@@ -1,7 +1,97 @@
-import { Briefcase, Building2, TrendingUp, CheckCircle, AlertCircle } from 'lucide-react';
-import { cn } from '@/lib/utils';
+'use client';
+
+import { useState, useEffect } from 'react';
+import { Briefcase, Building2, TrendingUp, CheckCircle, AlertCircle, Loader2, Sparkles, Send } from 'lucide-react';
+import { fetchFeed, matchMentors, logInteraction, type FeedItem, type MentorMatch } from '@/lib/api';
+
+// Demo fallback data
+const DEMO_FEED: FeedItem[] = [
+  {
+    id: '1',
+    type: 'announcement',
+    title: '🚀 New Linkage Formed',
+    content: 'TechNova Solutions has officially linked with Dr. Azmi Rahman for Go-To-Market strategy! This linkage is supported by the Cradle Mentorship Initiative.',
+    created_at: new Date().toISOString(),
+    metadata: { startup: 'TechNova Solutions', mentor: 'Dr. Azmi Rahman' },
+  },
+  {
+    id: '2',
+    type: 'opportunity',
+    title: '📢 Digital Export Grant 2026',
+    content: 'The new Digital Export Grant 2026 applications are now open for verified B2B SaaS startups. Focus areas include AI and Cloud Infrastructure.',
+    created_at: new Date(Date.now() - 7200000).toISOString(),
+    metadata: { source: 'MDEC' },
+  },
+];
+
+const DEMO_STARTUP_ID = 'demo-startup-001';
 
 export default function FeedPage() {
+  const [feedItems, setFeedItems] = useState<FeedItem[]>(DEMO_FEED);
+  const [loading, setLoading] = useState(true);
+  const [mentorMatches, setMentorMatches] = useState<MentorMatch[]>([]);
+  const [matchLoading, setMatchLoading] = useState(false);
+  const [matchError, setMatchError] = useState<string | null>(null);
+  const [logStatus, setLogStatus] = useState<string | null>(null);
+
+  // Fetch feed on mount
+  useEffect(() => {
+    async function loadFeed() {
+      try {
+        const data = await fetchFeed();
+        if (data.length > 0) setFeedItems(data);
+      } catch (err) {
+        console.log('Using demo feed data (backend unavailable)');
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadFeed();
+  }, []);
+
+  // Auto-fetch AI matches on mount
+  useEffect(() => {
+    async function loadMatches() {
+      setMatchLoading(true);
+      try {
+        const result = await matchMentors({
+          startup_id: DEMO_STARTUP_ID,
+          needs_text: 'Enterprise B2B sales strategy, Series A fundraising, cloud architecture',
+          match_threshold: 0.3,
+          match_count: 5,
+        });
+        if (result.matches.length > 0) setMentorMatches(result.matches);
+      } catch (err) {
+        // Silently fall back to no matches
+        console.log('AI matching unavailable — using static suggestions');
+      } finally {
+        setMatchLoading(false);
+      }
+    }
+    loadMatches();
+  }, []);
+
+  const handleLogInteraction = async () => {
+    setLogStatus('logging');
+    try {
+      await logInteraction('demo-linkage-001', 'Quick check-in via feed');
+      setLogStatus('success');
+      setTimeout(() => setLogStatus(null), 3000);
+    } catch {
+      setLogStatus('error');
+      setTimeout(() => setLogStatus(null), 3000);
+    }
+  };
+
+  const formatTime = (isoString: string) => {
+    const diff = Date.now() - new Date(isoString).getTime();
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours}h ago`;
+    return `${Math.floor(hours / 24)}d ago`;
+  };
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
       
@@ -40,7 +130,7 @@ export default function FeedPage() {
               <span className="text-[#0a66c2] font-semibold">94%</span>
             </div>
             <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-              <div className="bg-[#0a66c2] h-1.5 rounded-full" style={{ width: '94%' }}></div>
+              <div className="bg-[#0a66c2] h-1.5 rounded-full transition-all duration-1000" style={{ width: '94%' }}></div>
             </div>
             <p className="text-xs text-gray-500 mt-2">2 Active Mentorships</p>
           </div>
@@ -49,43 +139,45 @@ export default function FeedPage() {
 
       {/* MIDDLE COLUMN: Ecosystem Feed */}
       <div className="md:col-span-6 space-y-4">
-        {/* System Announcement Card */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-              <Briefcase className="h-5 w-5 text-[#0a66c2]" />
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">Ecosystem Governance</p>
-              <p className="text-xs text-gray-500">System Announcement • Just now</p>
-            </div>
+        {loading && (
+          <div className="bg-white rounded-lg border border-gray-200 p-8 flex items-center justify-center">
+            <Loader2 className="h-6 w-6 text-[#0a66c2] animate-spin" />
+            <span className="ml-2 text-sm text-gray-500">Loading ecosystem feed...</span>
           </div>
-          <p className="text-sm text-gray-800">
-            🚀 <strong>TechNova Solutions</strong> has officially linked with <strong>Dr. Azmi Rahman</strong> for Go-To-Market strategy! This linkage is supported by the Cradle Mentorship Initiative.
-          </p>
-          <div className="mt-3 bg-gray-50 p-3 rounded-md border border-gray-100 text-xs text-gray-600 flex items-center gap-2">
-             <CheckCircle className="h-4 w-4 text-green-500" /> Linkage established and currently active.
-          </div>
-        </div>
+        )}
 
-        {/* Partner Update Banner */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm">
-          <div className="flex items-center gap-3 mb-3">
-            <div className="h-10 w-10 rounded-full bg-purple-100 flex items-center justify-center">
-              <Building2 className="h-5 w-5 text-purple-600" />
+        {feedItems.map((item) => (
+          <div key={item.id} className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm hover:shadow-md transition-shadow">
+            <div className="flex items-center gap-3 mb-3">
+              <div className={`h-10 w-10 rounded-full flex items-center justify-center ${
+                item.type === 'announcement' ? 'bg-blue-100' :
+                item.type === 'opportunity' ? 'bg-purple-100' : 'bg-green-100'
+              }`}>
+                {item.type === 'announcement' ? <Briefcase className="h-5 w-5 text-[#0a66c2]" /> :
+                 item.type === 'opportunity' ? <Building2 className="h-5 w-5 text-purple-600" /> :
+                 <CheckCircle className="h-5 w-5 text-green-600" />}
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-900">{item.title}</p>
+                <p className="text-xs text-gray-500">
+                  {item.type === 'announcement' ? 'System Announcement' :
+                   item.type === 'opportunity' ? 'Ecosystem Opportunity' : 'Linkage Update'} • {formatTime(item.created_at)}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-sm font-semibold text-gray-900">MDEC Partner Update</p>
-              <p className="text-xs text-gray-500">Ecosystem Opportunity • 2 hours ago</p>
-            </div>
+            <p className="text-sm text-gray-800">{item.content}</p>
+            {item.type === 'announcement' && (
+              <div className="mt-3 bg-gray-50 p-3 rounded-md border border-gray-100 text-xs text-gray-600 flex items-center gap-2">
+                 <CheckCircle className="h-4 w-4 text-green-500" /> Linkage established and currently active.
+              </div>
+            )}
+            {item.type === 'opportunity' && (
+              <button className="mt-3 text-sm font-semibold text-[#0a66c2] hover:underline">
+                View Eligibility Criteria
+              </button>
+            )}
           </div>
-          <p className="text-sm text-gray-800">
-            The new <strong>Digital Export Grant 2026</strong> applications are now open for verified B2B SaaS startups. Focus areas include AI and Cloud Infrastructure. 
-          </p>
-          <button className="mt-3 text-sm font-semibold text-[#0a66c2] hover:underline">
-            View Eligibility Criteria
-          </button>
-        </div>
+        ))}
       </div>
 
       {/* RIGHT COLUMN: AI Intelligence & Governance */}
@@ -93,27 +185,46 @@ export default function FeedPage() {
         {/* AI Suggested Matches */}
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-4">
-            <TrendingUp className="h-4 w-4 text-[#0a66c2]" /> AI Suggested Mentors
+            <Sparkles className="h-4 w-4 text-[#0a66c2]" /> AI Suggested Mentors
+            {matchLoading && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
           </h3>
           
           <div className="space-y-4">
-            <div className="flex gap-3">
-              <div className="h-10 w-10 rounded-full bg-gray-200 flex-shrink-0"></div>
-              <div>
-                <p className="text-sm font-semibold text-gray-900 leading-tight">Sarah Lim</p>
-                <p className="text-xs text-gray-500 line-clamp-1">Ex-VP Sales at TechCorp | B2B Scaling</p>
-                <p className="text-xs font-medium text-green-600 mt-1">92% Match (Enterprise Sales)</p>
-              </div>
-            </div>
-            
-            <div className="flex gap-3">
-              <div className="h-10 w-10 rounded-full bg-gray-200 flex-shrink-0"></div>
-              <div>
-                <p className="text-sm font-semibold text-gray-900 leading-tight">Khairul Anwar</p>
-                <p className="text-xs text-gray-500 line-clamp-1">AI Solutions Architect</p>
-                <p className="text-xs font-medium text-green-600 mt-1">88% Match (AI Infrastructure)</p>
-              </div>
-            </div>
+            {mentorMatches.length > 0 ? (
+              mentorMatches.slice(0, 3).map((match) => (
+                <div key={match.mentor_id} className="flex gap-3 group">
+                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 flex-shrink-0 flex items-center justify-center">
+                    <span className="text-[#0a66c2] font-bold text-sm">
+                      {match.name.split(' ').map(n => n[0]).join('')}
+                    </span>
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 leading-tight group-hover:text-[#0a66c2] transition-colors">{match.name}</p>
+                    <p className="text-xs text-gray-500 line-clamp-1">{match.skills_summary || 'Expert Mentor'}</p>
+                    <p className="text-xs font-medium text-green-600 mt-1">{Math.round(match.similarity * 100)}% Match</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <>
+                <div className="flex gap-3">
+                  <div className="h-10 w-10 rounded-full bg-gray-200 flex-shrink-0"></div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 leading-tight">Sarah Lim</p>
+                    <p className="text-xs text-gray-500 line-clamp-1">Ex-VP Sales at TechCorp | B2B Scaling</p>
+                    <p className="text-xs font-medium text-green-600 mt-1">92% Match (Enterprise Sales)</p>
+                  </div>
+                </div>
+                <div className="flex gap-3">
+                  <div className="h-10 w-10 rounded-full bg-gray-200 flex-shrink-0"></div>
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900 leading-tight">Khairul Anwar</p>
+                    <p className="text-xs text-gray-500 line-clamp-1">AI Solutions Architect</p>
+                    <p className="text-xs font-medium text-green-600 mt-1">88% Match (AI Infrastructure)</p>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
           
           <button className="w-full mt-4 text-sm font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-50 py-1.5 rounded-md transition-colors">
@@ -121,7 +232,7 @@ export default function FeedPage() {
           </button>
         </div>
 
-        {/* Governance Alert Example (For Admins/Startups) */}
+        {/* Governance Alert */}
         <div className="bg-orange-50 rounded-lg border border-orange-200 p-4">
            <h3 className="text-sm font-semibold text-orange-800 flex items-center gap-2 mb-2">
             <AlertCircle className="h-4 w-4" /> Attention Required
@@ -129,8 +240,18 @@ export default function FeedPage() {
           <p className="text-xs text-orange-700">
             Your linkage with Mentor <strong>Johari</strong> has not had a recorded interaction in 14 days. Health score is declining.
           </p>
-          <button className="mt-2 text-xs font-semibold bg-white border border-orange-200 text-orange-700 px-3 py-1 rounded-md shadow-sm hover:bg-orange-100">
-            Log Interaction
+          <button
+            onClick={handleLogInteraction}
+            disabled={logStatus === 'logging'}
+            className="mt-2 text-xs font-semibold bg-white border border-orange-200 text-orange-700 px-3 py-1 rounded-md shadow-sm hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1"
+          >
+            {logStatus === 'logging' ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Logging...</>
+            ) : logStatus === 'success' ? (
+              <><CheckCircle className="h-3 w-3 text-green-600" /> Logged!</>
+            ) : (
+              <><Send className="h-3 w-3" /> Log Interaction</>
+            )}
           </button>
         </div>
       </div>

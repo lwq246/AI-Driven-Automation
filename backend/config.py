@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
 
-    # OpenAI / LLM
-    OPENAI_API_KEY: str
+    # Google Gemini API
+    GEMINI_API_KEY: str
 
     # CORS - Frontend URL
     FRONTEND_URL: str = "http://localhost:3000"
@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     PORT: int = 8000
 
     model_config = {
-        "env_file": ".env",
+        "env_file": ".env.local",
         "env_file_encoding": "utf-8",
     }
 
