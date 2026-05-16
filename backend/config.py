@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     SUPABASE_SERVICE_ROLE_KEY: str
 
     # OpenAI / LLM
-    OPENAI_API_KEY: str
+    GEMINI_API_KEY: str
 
     # CORS - Frontend URL
     FRONTEND_URL: str = "http://localhost:3000"
