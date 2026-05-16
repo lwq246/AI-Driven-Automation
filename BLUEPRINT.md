@@ -7,17 +7,18 @@ This blueprint outlines the architecture, database schema, project structure, UI
 
 ## 1. Platform Architecture & Logic Flow
 
-The platform transitions innovation ecosystem management from static spreadsheets to a dynamic, AI-driven graph of programmable relationships.
+The platform transitions innovation ecosystem management from static spreadsheets to a dynamic, AI-driven graph of programmable relationships. The system uses a **split frontend/backend architecture**:
 
-*   **Next.js (App Router)**: Serves as the core application framework. Server Components are used for fast, SEO-friendly rendering of public ecosystem pages, while Client Components power the interactive "LinkedIn-style" feed and real-time dashboard. API routes handle the orchestration of LLM requests.
-*   **Supabase (Auth & Database)**: Acts as the foundational backend. PostgreSQL handles relational data (Profiles, Programs, Linkages), while Row Level Security (RLS) ensures startups only see their own private linkage data and public feed items.
+*   **Next.js Frontend (`frontend/`)**: Serves as the UI layer only. The App Router handles client-side rendering of the "LinkedIn-style" feed, interactive dashboards, and user-facing pages. It communicates with the FastAPI backend via HTTP REST calls. No server-side business logic lives here.
+*   **FastAPI Backend (`backend/`)**: A Python-based REST API server that handles all business logic, AI orchestration, and database operations. It exposes endpoints for AI matching, SSM verification, nudge generation, health tracking, and data CRUD. It communicates directly with Supabase using the service role key.
+*   **Supabase (Auth & Database)**: Acts as the foundational data layer. PostgreSQL handles relational data (Profiles, Programs, Linkages), while Row Level Security (RLS) ensures startups only see their own private linkage data and public feed items.
 *   **pgvector (Semantic Matching)**: Embeddings of mentor skills, startup needs, and program focuses are stored natively in Postgres using `pgvector`. This allows for ultra-fast, in-database similarity searches without needing external vector databases.
 *   **Programmable Linkages**: Instead of a "connection" just being a foreign key, a `Linkage` is a state machine with a `status` (Pending, Active, At-Risk, Graduated) and a `health_score`.
 
 ### AI Logic Flow
-1.  **Auto-Verification**: When a startup registers, they upload their SSM (Suruhanjaya Syarikat Malaysia) certificate. A Next.js API route passes the document to an LLM Vision/Document API to extract the Company Name and Registration Number, automatically verifying the profile without admin intervention.
-2.  **Semantic Matching**: When a startup updates their "Current Challenges" (e.g., "Struggling with B2B enterprise sales"), an edge function generates an embedding and queries `pgvector` to find Mentors whose "Expertise Summary" embeddings have the highest cosine similarity.
-3.  **Health Tracking**: A Supabase pg_cron job runs daily to evaluate the `last_interaction_date` and frequency of interaction within a Linkage. If health drops below a threshold, an LLM generates a context-aware "Nudge" email to both parties.
+1.  **Auto-Verification**: When a startup registers, they upload their SSM (Suruhanjaya Syarikat Malaysia) certificate. The frontend sends the file to the FastAPI endpoint `POST /api/ai/verify-ssm`, which passes the document to an LLM Vision/Document API to extract the Company Name and Registration Number, automatically verifying the profile without admin intervention.
+2.  **Semantic Matching**: When a startup updates their "Current Challenges" (e.g., "Struggling with B2B enterprise sales"), the frontend calls `POST /api/ai/match` which generates an embedding and queries `pgvector` to find Mentors whose "Expertise Summary" embeddings have the highest cosine similarity.
+3.  **Health Tracking**: A scheduled job (via `pg_cron` or external scheduler) calls `POST /api/cron/health-check` daily to evaluate the `last_interaction_date` and frequency of interaction within a Linkage. If health drops below a threshold, the backend calls the LLM to generate a context-aware "Nudge" email to both parties via `POST /api/ai/generate-nudge`.
 
 ### UN SDGs Addressed
 *   **SDG 8 (Decent Work & Economic Growth)**: By accelerating high-quality mentor and partner linkages, the platform directly increases startup survival rates and economic output in the Malaysian tech sector.
@@ -136,40 +137,49 @@ CREATE TABLE partnership_links (
 
 ---
 
-## 3. Next.js App Router Folder Structure
+## 3. Project Folder Structure (Split Architecture)
 
 ```text
 /
-├── app/
-│   ├── (auth)/
-│   │   ├── login/page.tsx               # Supabase Auth UI
-│   │   └── onboard/page.tsx             # Role selection & SSM upload
-│   ├── (dashboard)/
-│   │   ├── layout.tsx                   # The 3-column "LinkedIn" layout shell
-│   │   ├── feed/page.tsx                # Central activity feed (Middle Column)
-│   │   ├── network/page.tsx             # Manage active Linkages & Health Scores
-│   │   ├── profile/page.tsx             # Public ecosystem profile
-│   │   └── admin/page.tsx               # Ecosystem-wide metrics (Cradle View)
-│   ├── api/
-│   │   ├── ai/
-│   │   │   ├── match/route.ts           # Generates embeddings & calls Postgres RPC
-│   │   │   ├── verify-ssm/route.ts      # LLM Vision OCR for document verification
-│   │   │   └── generate-nudge/route.ts  # LLM logic for "At-Risk" linkages
-│   │   └── cron/
-│   │       └── health-check/route.ts    # Evaluates linkage health daily
-│   ├── layout.tsx                       # Root layout (Providers, Fonts)
-│   └── page.tsx                         # Landing page outlining ecosystem value
-├── components/
-│   ├── ui/                              # Shadcn UI / Base Tailwind components
-│   ├── feed/                            # SystemAnnouncementCard, PartnerUpdateBanner
-│   ├── network/                         # LinkageHealthMeter, MatchRecommendationCard
-│   └── shared/                          # SidebarNav, TrustBadge
-├── lib/
-│   ├── supabase/                        # Server & Client Supabase initializers
-│   ├── ai/                              # LLM API wrappers (Gemini/OpenAI)
-│   └── utils.ts                         # Tailwind merge, date formatters
-└── types/
-    └── database.types.ts                # Auto-generated Supabase types
+├── frontend/                            # Next.js App Router (UI Only)
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   ├── login/page.tsx           # Supabase Auth UI
+│   │   │   └── onboard/page.tsx         # Role selection & SSM upload
+│   │   ├── (dashboard)/
+│   │   │   ├── layout.tsx               # The 3-column "LinkedIn" layout shell
+│   │   │   ├── feed/page.tsx            # Central activity feed (Middle Column)
+│   │   │   ├── network/page.tsx         # Manage active Linkages & Health Scores
+│   │   │   ├── profile/page.tsx         # Public ecosystem profile
+│   │   │   └── admin/page.tsx           # Ecosystem-wide metrics (Cradle View)
+│   │   ├── layout.tsx                   # Root layout (Providers, Fonts)
+│   │   └── page.tsx                     # Landing page / redirect
+│   ├── components/
+│   │   ├── ui/                          # Shadcn UI / Base Tailwind components
+│   │   ├── feed/                        # SystemAnnouncementCard, PartnerUpdateBanner
+│   │   ├── network/                     # LinkageHealthMeter, MatchRecommendationCard
+│   │   └── shared/                      # SidebarNav, TrustBadge, Navbar
+│   ├── lib/
+│   │   └── utils.ts                     # Tailwind merge, date formatters
+│   ├── next.config.js                   # NEXT_PUBLIC_API_URL → FastAPI backend
+│   ├── package.json
+│   └── tailwind.config.js
+│
+├── backend/                             # FastAPI (All Business Logic & AI)
+│   ├── main.py                          # App entrypoint, CORS, router registration
+│   ├── config.py                        # Pydantic Settings (env var loading)
+│   ├── database.py                      # Supabase client initialization
+│   ├── schemas.py                       # Pydantic request/response models
+│   ├── routers/
+│   │   ├── ai.py                        # POST /api/ai/match, verify-ssm, generate-nudge
+│   │   ├── health.py                    # POST /api/cron/health-check
+│   │   └── data.py                      # GET /api/feed, linkages, profile, admin/metrics
+│   ├── requirements.txt                 # Python dependencies
+│   └── .env.example                     # Environment variable template
+│
+├── BLUEPRINT.md                         # This file
+├── BACKEND_TODO.md                      # Backend implementation checklist
+└── .gitignore
 ```
 
 ---
@@ -199,10 +209,37 @@ The UI uses a familiar 3-column layout to encourage engagement, but replaces soc
 
 ---
 
-## 5. AI Integration Plan (The "Secret Sauce")
+## 5. API Endpoints Reference (FastAPI Backend)
+
+All backend endpoints are served by the FastAPI application at `http://localhost:8000` (development). The Swagger UI is available at `/docs`.
+
+### AI Endpoints (`/api/ai`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/ai/match` | Generate embedding & find mentor matches via pgvector |
+| `POST` | `/api/ai/verify-ssm` | OCR verification of SSM certificates via LLM Vision |
+| `POST` | `/api/ai/generate-nudge` | Generate nudge email for at-risk linkages |
+
+### Cron Endpoints (`/api/cron`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/cron/health-check` | Evaluate & decay linkage health scores |
+
+### Data Endpoints (`/api`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/feed` | Fetch ecosystem feed items |
+| `GET` | `/api/linkages` | Fetch user's active linkages |
+| `GET` | `/api/profile/{id}` | Fetch startup/mentor profile |
+| `GET` | `/api/admin/metrics` | Fetch ecosystem-wide KPIs |
+| `POST` | `/api/linkages/{id}/log-interaction` | Log an interaction |
+
+---
+
+## 6. AI Integration Plan (The "Secret Sauce")
 
 ### The `pgvector` Matching Logic
-To find the best mentor for a startup, we use **Cosine Distance** (`<=>`). We create a Postgres Stored Procedure (RPC) that the Next.js API route calls:
+To find the best mentor for a startup, we use **Cosine Distance** (`<=>`). We create a Postgres Stored Procedure (RPC) that the FastAPI `POST /api/ai/match` endpoint calls:
 
 ```sql
 CREATE OR REPLACE FUNCTION match_mentors_to_startup(
@@ -233,9 +270,9 @@ $$;
 
 ### Automated Admin Alerts & Linkage Health
 Instead of Cradle admins manually emailing mentors to ask "How is the startup doing?", the platform automates it:
-1.  **Health Decay**: A cron job reduces the `health_score` of a `mentorship_link` by 5 points for every 7 days without a recorded interaction (e.g. check-in log or meeting date).
+1.  **Health Decay**: The FastAPI `POST /api/cron/health-check` endpoint (triggered daily by a scheduler) reduces the `health_score` of a `mentorship_link` by 5 points for every 7 days without a recorded interaction (e.g. check-in log or meeting date).
 2.  **Trigger**: If `health_score < 50`, the status shifts to `at_risk`.
-3.  **The Nudge Generation**: The system triggers a serverless function that prompts the LLM:
+3.  **The Nudge Generation**: The system calls `POST /api/ai/generate-nudge` which prompts the LLM:
     *   *System Prompt*: "You are an ecosystem coordinator for Cradle. Write a polite, highly professional check-in email to a mentor. Comply strictly with Malaysian professional etiquette."
     *   *Context*: Passes the Mentor's name, Startup's name, and the date of their last interaction.
     *   *Result*: A drafted email/message presented to the Admin (or sent automatically), e.g., *"Dear [Mentor], It's been a few weeks since your last tracked session with [Startup] regarding [Topic]. Please let us know if you need assistance..."*
