@@ -152,11 +152,14 @@ export async function matchMentors(request: MatchRequest): Promise<MatchResponse
 }
 
 // --- SSM Verify ---
-export async function verifySSM(startupId: string, file: File): Promise<SSMVerifyResponse> {
+export async function verifySSM(file: File, startupId?: string): Promise<SSMVerifyResponse> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const url = `${API_BASE}/api/ai/verify-ssm?startup_id=${encodeURIComponent(startupId)}`;
+  const url = startupId 
+    ? `${API_BASE}/api/ai/verify-ssm?startup_id=${encodeURIComponent(startupId)}`
+    : `${API_BASE}/api/ai/verify-ssm`;
+    
   const res = await fetch(url, {
     method: 'POST',
     body: formData,

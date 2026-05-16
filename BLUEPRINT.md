@@ -20,6 +20,16 @@ The platform transitions innovation ecosystem management from static spreadsheet
 2.  **Semantic Matching**: When a startup updates their "Current Challenges" (e.g., "Struggling with B2B enterprise sales"), the frontend calls `POST /api/ai/match` which generates an embedding and queries `pgvector` to find Mentors whose "Expertise Summary" embeddings have the highest cosine similarity.
 3.  **Health Tracking**: A scheduled job (via `pg_cron` or external scheduler) calls `POST /api/cron/health-check` daily to evaluate the `last_interaction_date` and frequency of interaction within a Linkage. If health drops below a threshold, the backend calls the LLM to generate a context-aware "Nudge" email to both parties via `POST /api/ai/generate-nudge`.
 
+### Authentication & Authorization (Role Management)
+*   **Supabase Auth**: The platform leverages Supabase `auth.users` for secure identity management (Email/Password or OAuth).
+*   **Role-Based Access Control (RBAC)**: Upon registration and onboarding, a user is mapped to a specific role (`Startup`, `Mentor`, `Partner`, `Admin`) in a central `user_roles` table.
+*   **Onboarding Flow (Startups, Mentors, Partners only)**:
+    1.  User signs up via the `/login` page.
+    2.  If it's their first time, they are redirected to `/onboard`.
+    3.  They select their role (limited to `Startup`, `Mentor`, or `Partner`) and submit role-specific data (e.g., SSM cert for startups). *Note: Admin accounts cannot be created via public registration and must be provisioned manually.*
+    4.  The backend (`POST /api/auth/register-role`) creates a record in the specific actor table (`startups`, `mentors`, `partners`) linked to their `auth.users.id`.
+*   **Login Flow (All Roles)**: Subsequent logins fetch the user's role and route them directly to their personalized dashboard view. This login logic is identical for every role, including `Admin`.
+
 ### UN SDGs Addressed
 *   **SDG 8 (Decent Work & Economic Growth)**: By accelerating high-quality mentor and partner linkages, the platform directly increases startup survival rates and economic output in the Malaysian tech sector.
 *   **SDG 9 (Industry, Innovation & Infrastructure)**: Replaces fragmented, manual coordination with scalable digital infrastructure for national innovation hubs like Cradle.
@@ -36,11 +46,19 @@ This schema directly reflects your table framework, ensuring that "Linkages" are
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- ==========================================
--- 1. The Structure Tables (The Framework)
+-- 1. Identity & Structure Tables
 -- ==========================================
+
+-- Central role mapping for quick routing upon login
+CREATE TABLE user_roles (
+    user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    role VARCHAR(50) NOT NULL CHECK (role IN ('Startup', 'Mentor', 'Partner', 'Admin')),
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
 
 CREATE TABLE admins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     role VARCHAR(50) CHECK (role IN ('Admin', 'Owner'))
@@ -70,6 +88,7 @@ CREATE TABLE programs (
 
 CREATE TABLE startups (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
     company_name VARCHAR(255) NOT NULL,
     industry VARCHAR(100),
     stage VARCHAR(50),
@@ -81,6 +100,7 @@ CREATE TABLE startups (
 
 CREATE TABLE mentors (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
     name VARCHAR(255) NOT NULL,
     expertise_skills TEXT[], -- Array of Tags
     bio TEXT,
@@ -91,6 +111,7 @@ CREATE TABLE mentors (
 
 CREATE TABLE partners (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID REFERENCES auth.users(id) ON DELETE CASCADE UNIQUE,
     name VARCHAR(255) NOT NULL,
     type VARCHAR(50) CHECK (type IN ('Sponsor', 'Provider')),
     service_category VARCHAR(100),
@@ -171,6 +192,7 @@ CREATE TABLE partnership_links (
 │   ├── database.py                      # Supabase client initialization
 │   ├── schemas.py                       # Pydantic request/response models
 │   ├── routers/
+│   │   ├── auth.py                      # POST /api/auth/register-role, GET /api/auth/me
 │   │   ├── ai.py                        # POST /api/ai/match, verify-ssm, generate-nudge
 │   │   ├── health.py                    # POST /api/cron/health-check
 │   │   └── data.py                      # GET /api/feed, linkages, profile, admin/metrics
@@ -212,6 +234,12 @@ The UI uses a familiar 3-column layout to encourage engagement, but replaces soc
 ## 5. API Endpoints Reference (FastAPI Backend)
 
 All backend endpoints are served by the FastAPI application at `http://localhost:8000` (development). The Swagger UI is available at `/docs`.
+
+### Auth Endpoints (`/api/auth`)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/auth/register-role` | Maps an `auth.users.id` to a specific role and creates the actor profile |
+| `GET`  | `/api/auth/me` | Returns the current user's role and associated profile data |
 
 ### AI Endpoints (`/api/ai`)
 | Method | Endpoint | Description |
