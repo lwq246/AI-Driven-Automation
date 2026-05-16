@@ -43,10 +43,15 @@ async def match_mentors(request: MatchRequest):
     try:
         # Step 1: Generate embedding via Gemini
         client = _get_gemini_client()
+        from google.genai import types
 
         embedding_response = client.models.embed_content(
-            model="text-embedding-004",
+            model="gemini-embedding-2-preview",
             contents=request.needs_text,
+            config=types.EmbedContentConfig(
+                task_type="SEMANTIC_SIMILARITY",
+                output_dimensionality=768
+            )
         )
         query_embedding = embedding_response.embeddings[0].values
 
