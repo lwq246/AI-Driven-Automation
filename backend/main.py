@@ -1,12 +1,13 @@
 """
 FastAPI application entrypoint for the Ecosystem Linkage Platform backend.
 
-This server handles all API logic previously planned as Next.js API routes:
+This server handles all API logic:
 - AI matching (pgvector semantic search via Gemini Embeddings)
 - SSM certificate verification (Gemini Vision OCR)
 - Nudge generation for at-risk linkages (Gemini Chat)
 - Health check cron jobs (APScheduler)
 - Data CRUD for the frontend
+- Authentication & role management
 """
 
 import os
@@ -14,7 +15,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from routers import ai, health, data
+from routers import ai, health, data, auth
 
 
 @asynccontextmanager
@@ -79,6 +80,7 @@ app.add_middleware(
 app.include_router(ai.router)
 app.include_router(health.router)
 app.include_router(data.router)
+app.include_router(auth.router)
 
 
 @app.get("/")

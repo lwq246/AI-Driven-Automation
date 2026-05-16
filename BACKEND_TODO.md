@@ -11,31 +11,45 @@
 - [ ] Verify FastAPI starts: `uvicorn main:app --reload` → check `/docs`.
 - [ ] Connect the Next.js frontend to the backend via `NEXT_PUBLIC_API_URL` env var.
 
-## 2. Database Schema (The Framework)
+## 2. Authentication & Role Management
+- [ ] Enable Email/Password Auth in the Supabase Dashboard.
+- [ ] Implement `POST /api/auth/register-role` in `backend/routers/auth.py` to map `auth.users.id` to specific roles (Startup/Mentor/Partner) after initial signup.
+- [ ] Implement `GET /api/auth/me` in `backend/routers/auth.py` to fetch current user's role and profile data based on their JWT.
+
+## 3. Database Schema (The Framework)
 - [ ] Enable the `pgvector` extension in the Supabase SQL editor (`CREATE EXTENSION IF NOT EXISTS vector;`).
+- [ ] Create the **user_roles** table for centralized routing.
 - [ ] Create the **Structure Tables**: `admins`, `initiatives`, `programs`.
 - [ ] Create the **Actor Tables**: `startups`, `mentors`, `partners`.
+- [ ] Add `user_id UUID REFERENCES auth.users(id)` to all actor tables (`startups`, `mentors`, `partners`, `admins`).
 - [ ] Add `vector(1536)` columns to `startups` (`needs_embedding`) and `mentors` (`skills_embedding`).
 - [ ] Create the **First-Class Linkage Tables**: `enrollment_links`, `mentorship_links`, `partnership_links`.
 - [ ] Configure Foreign Keys to ensure linkages correctly reference programs and actors.
 
-## 3. Security & Governance
+## 4. Security & Governance
 - [ ] Enable Row Level Security (RLS) on all tables.
 - [ ] Create RLS policies:
+  - [ ] Users can only insert/update their own profile data based on `auth.uid()`.
   - [ ] Startups can only view their own private linkage data.
   - [ ] Startups can view public ecosystem feed items and programs.
   - [ ] Admins have full access to view metrics and govern linkages.
 - [ ] Backend uses `SUPABASE_SERVICE_ROLE_KEY` (bypasses RLS) — ensure this key is **never** exposed to the frontend.
 
+<<<<<<< HEAD
 ## 4. AI & Vector Matching Logic
 - [x] Create the `match_mentors_to_startup` Postgres Stored Procedure using Cosine Distance (`<=>`).
 - [x] Wire up `POST /api/ai/match` endpoint in `backend/routers/ai.py`:
+=======
+## 5. AI & Vector Matching Logic
+- [ ] Create the `match_mentors_to_startup` Postgres Stored Procedure using Cosine Distance (`<=>`).
+- [ ] Wire up `POST /api/ai/match` endpoint in `backend/routers/ai.py`:
+>>>>>>> 6351a6cd67776fb82b29b7036076fa177c29b602
   - Receives startup needs text.
   - Generates embedding via OpenAI `text-embedding-ada-002`.
   - Calls the Supabase RPC stored procedure.
   - Returns ranked mentor matches.
 
-## 5. Automated Health Tracking
+## 6. Automated Health Tracking
 - [ ] Set up a database trigger to update `last_interaction_date` in `mentorship_links` whenever an interaction is logged.
 - [ ] Wire up `POST /api/cron/health-check` endpoint in `backend/routers/health.py`:
   - Decrease `health_score` by 5 points for linkages inactive for > 7 days.
@@ -44,7 +58,7 @@
   - [ ] Option A: `pg_cron` in Supabase to call the endpoint daily (production-recommended).
   - [ ] Option B: `APScheduler` within the FastAPI process for simpler setups.
 
-## 6. AI "Nudge" & Verification Endpoints
+## 7. AI "Nudge" & Verification Endpoints
 - [ ] Wire up `POST /api/ai/generate-nudge` in `backend/routers/ai.py`:
   - Pass context (Startup Name, Mentor Name, Last Interaction) to LLM.
   - Generate professional, Malaysian-compliant check-in email.
@@ -52,7 +66,7 @@
   - Implement OCR using LLM Vision API (GPT-4o) to extract Company Name and Registration Number from uploaded certificates.
   - Automatically update Startup `verification_status` to `Verified`.
 
-## 7. Data CRUD Endpoints
+## 8. Data CRUD Endpoints
 - [ ] Wire up `GET /api/feed` in `backend/routers/data.py` — ecosystem feed items.
 - [ ] Wire up `GET /api/linkages` in `backend/routers/data.py` — user linkages.
 - [ ] Wire up `GET /api/profile/{id}` in `backend/routers/data.py` — startup/mentor profiles.

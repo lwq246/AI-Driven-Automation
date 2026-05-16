@@ -1,47 +1,109 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Briefcase, Building2, TrendingUp, CheckCircle, AlertCircle, Loader2, Sparkles, Send } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Briefcase, Building2, TrendingUp, CheckCircle, AlertCircle, Loader2, Sparkles, Send, User } from 'lucide-react';
 import { fetchFeed, matchMentors, logInteraction, type FeedItem, type MentorMatch } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 
-// Demo fallback data
-const DEMO_FEED: FeedItem[] = [
-  {
-    id: '1',
-    type: 'announcement',
-    title: '🚀 New Linkage Formed',
-    content: 'TechNova Solutions has officially linked with Dr. Azmi Rahman for Go-To-Market strategy! This linkage is supported by the Cradle Mentorship Initiative.',
-    created_at: new Date().toISOString(),
-    metadata: { startup: 'TechNova Solutions', mentor: 'Dr. Azmi Rahman' },
-  },
-  {
-    id: '2',
-    type: 'opportunity',
-    title: '📢 Digital Export Grant 2026',
-    content: 'The new Digital Export Grant 2026 applications are now open for verified B2B SaaS startups. Focus areas include AI and Cloud Infrastructure.',
-    created_at: new Date(Date.now() - 7200000).toISOString(),
-    metadata: { source: 'MDEC' },
-  },
-];
-
-const DEMO_STARTUP_ID = 'demo-startup-001';
+interface UserProfile {
+  role: string;
+  company_name?: string;
+  name?: string;
+  verification_status?: string;
+  industry?: string;
+}
 
 export default function FeedPage() {
-  const [feedItems, setFeedItems] = useState<FeedItem[]>(DEMO_FEED);
+  const router = useRouter();
+  const [feedItems, setFeedItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [mentorMatches, setMentorMatches] = useState<MentorMatch[]>([]);
   const [matchLoading, setMatchLoading] = useState(false);
-  const [matchError, setMatchError] = useState<string | null>(null);
   const [logStatus, setLogStatus] = useState<string | null>(null);
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [profileLoading, setProfileLoading] = useState(true);
+
+  // Fetch the current user's role and profile data
+  useEffect(() => {
+    async function loadUserProfile() {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          router.push('/login');
+          return;
+        }
+
+        const token = session.access_token;
+
+        // 1. Get user role
+        const roleRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/auth/me`, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (!roleRes.ok) {
+          router.push('/login');
+          return;
+        }
+
+        const roleData = await roleRes.json();
+        
+        if (roleData.role === 'None') {
+          router.push('/onboard');
+          return;
+        }
+
+        // 2. Fetch actor-specific profile from Supabase
+        const userId = session.user.id;
+        let profile: UserProfile = { role: roleData.role };
+
+        if (roleData.role === 'Startup') {
+          const { data } = await supabase
+            .from('startups')
+            .select('company_name, industry, verification_status')
+            .eq('user_id', userId)
+            .single();
+          if (data) {
+            profile = { ...profile, ...data };
+          }
+        } else if (roleData.role === 'Mentor') {
+          const { data } = await supabase
+            .from('mentors')
+            .select('name, expertise_skills, bio')
+            .eq('user_id', userId)
+            .single();
+          if (data) {
+            profile = { ...profile, name: data.name };
+          }
+        } else if (roleData.role === 'Partner') {
+          const { data } = await supabase
+            .from('partners')
+            .select('name, type, service_category')
+            .eq('user_id', userId)
+            .single();
+          if (data) {
+            profile = { ...profile, name: data.name };
+          }
+        }
+
+        setUserProfile(profile);
+      } catch (err) {
+        console.error('Failed to load user profile:', err);
+      } finally {
+        setProfileLoading(false);
+      }
+    }
+    loadUserProfile();
+  }, [router]);
 
   // Fetch feed on mount
   useEffect(() => {
     async function loadFeed() {
       try {
         const data = await fetchFeed();
-        if (data.length > 0) setFeedItems(data);
+        setFeedItems(data);
       } catch (err) {
-        console.log('Using demo feed data (backend unavailable)');
+        console.log('Feed unavailable:', err);
       } finally {
         setLoading(false);
       }
@@ -49,38 +111,76 @@ export default function FeedPage() {
     loadFeed();
   }, []);
 
-  // Auto-fetch AI matches on mount
+  // Fetch AI matches only for Startups
   useEffect(() => {
+    if (!userProfile || userProfile.role !== 'Startup') return;
+
     async function loadMatches() {
       setMatchLoading(true);
       try {
-        const result = await matchMentors({
-          startup_id: DEMO_STARTUP_ID,
-          needs_text: 'Enterprise B2B sales strategy, Series A fundraising, cloud architecture',
-          match_threshold: 0.3,
-          match_count: 5,
-        });
-        if (result.matches.length > 0) setMentorMatches(result.matches);
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) return;
+
+        // Get the startup record to get the actual ID
+        const { data: startup } = await supabase
+          .from('startups')
+          .select('id')
+          .eq('user_id', session.user.id)
+          .single();
+
+        if (startup) {
+          const result = await matchMentors({
+            startup_id: startup.id,
+            needs_text: 'Enterprise B2B sales strategy, cloud architecture, AI solutions',
+            match_threshold: 0.3,
+            match_count: 5,
+          });
+          if (result.matches.length > 0) setMentorMatches(result.matches);
+        }
       } catch (err) {
-        // Silently fall back to no matches
-        console.log('AI matching unavailable — using static suggestions');
+        console.log('AI matching unavailable');
       } finally {
         setMatchLoading(false);
       }
     }
     loadMatches();
-  }, []);
+  }, [userProfile]);
 
   const handleLogInteraction = async () => {
     setLogStatus('logging');
     try {
-      await logInteraction('demo-linkage-001', 'Quick check-in via feed');
+      // Get a real linkage ID if available
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const { data: startup } = await supabase
+        .from('startups')
+        .select('id')
+        .eq('user_id', session.user.id)
+        .single();
+
+      if (startup) {
+        const { data: linkages } = await supabase
+          .from('mentorship_links')
+          .select('id')
+          .eq('startup_id', startup.id)
+          .limit(1);
+
+        if (linkages && linkages.length > 0) {
+          await logInteraction(linkages[0].id, 'Quick check-in via feed');
+        }
+      }
       setLogStatus('success');
       setTimeout(() => setLogStatus(null), 3000);
     } catch {
       setLogStatus('error');
       setTimeout(() => setLogStatus(null), 3000);
     }
+  };
+
+  const handleSignOut = async () => {
+    await supabase.auth.signOut();
+    window.location.href = '/login';
   };
 
   const formatTime = (isoString: string) => {
@@ -92,6 +192,10 @@ export default function FeedPage() {
     return `${Math.floor(hours / 24)}d ago`;
   };
 
+  const displayName = userProfile?.company_name || userProfile?.name || 'User';
+  const roleLabel = userProfile?.role || '';
+  const isVerified = userProfile?.verification_status === 'Verified';
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
       
@@ -101,38 +205,42 @@ export default function FeedPage() {
           <div className="h-16 bg-gradient-to-r from-blue-100 to-blue-50"></div>
           <div className="px-4 pb-4 relative">
             <div className="h-16 w-16 rounded-full border-4 border-white bg-white mx-auto -mt-8 flex items-center justify-center shadow-sm overflow-hidden">
-              <Building2 className="h-8 w-8 text-gray-400" />
+              {profileLoading ? (
+                <Loader2 className="h-6 w-6 text-gray-300 animate-spin" />
+              ) : (
+                <User className="h-8 w-8 text-gray-400" />
+              )}
             </div>
             <div className="text-center mt-2">
-              <h2 className="text-lg font-semibold text-gray-900">TechNova Solutions</h2>
-              <p className="text-sm text-gray-500">B2B SaaS | Seed Stage</p>
+              <h2 className="text-lg font-semibold text-gray-900">{displayName}</h2>
+              <p className="text-sm text-gray-500">
+                {roleLabel}{userProfile?.industry ? ` | ${userProfile.industry}` : ''}
+              </p>
             </div>
             
             <div className="mt-4 pt-4 border-t border-gray-100 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-gray-500 font-medium flex items-center gap-1">
-                  <CheckCircle className="h-3 w-3 text-green-600" /> SSM Verified
+                  {isVerified ? (
+                    <><CheckCircle className="h-3 w-3 text-green-600" /> SSM Verified</>
+                  ) : (
+                    <><AlertCircle className="h-3 w-3 text-yellow-500" /> Pending Verification</>
+                  )}
                 </span>
-                <span className="text-green-600 font-medium">Active</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-500 font-medium flex items-center gap-1">
-                  <Briefcase className="h-3 w-3 text-blue-600" /> Cradle Grantee
+                <span className={`font-medium ${isVerified ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {isVerified ? 'Active' : 'Pending'}
                 </span>
-                <span className="text-blue-600 font-medium">CIP Spark</span>
               </div>
             </div>
           </div>
           
           <div className="bg-gray-50 px-4 py-3 border-t border-gray-200">
-            <div className="flex justify-between text-sm">
-              <span className="text-gray-500 font-medium">Overall Linkage Health</span>
-              <span className="text-[#0a66c2] font-semibold">94%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-1.5 mt-2">
-              <div className="bg-[#0a66c2] h-1.5 rounded-full transition-all duration-1000" style={{ width: '94%' }}></div>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">2 Active Mentorships</p>
+            <button
+              onClick={handleSignOut}
+              className="w-full text-xs text-gray-500 hover:text-red-600 font-medium transition-colors"
+            >
+              Sign out
+            </button>
           </div>
         </div>
       </div>
@@ -143,6 +251,13 @@ export default function FeedPage() {
           <div className="bg-white rounded-lg border border-gray-200 p-8 flex items-center justify-center">
             <Loader2 className="h-6 w-6 text-[#0a66c2] animate-spin" />
             <span className="ml-2 text-sm text-gray-500">Loading ecosystem feed...</span>
+          </div>
+        )}
+
+        {!loading && feedItems.length === 0 && (
+          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
+            <Building2 className="h-10 w-10 text-gray-300 mx-auto mb-3" />
+            <p className="text-sm text-gray-500">No feed items yet. The ecosystem is just getting started!</p>
           </div>
         )}
 
@@ -182,77 +297,80 @@ export default function FeedPage() {
 
       {/* RIGHT COLUMN: AI Intelligence & Governance */}
       <div className="md:col-span-3 space-y-4">
-        {/* AI Suggested Matches */}
-        <div className="bg-white rounded-lg border border-gray-200 p-4">
-          <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-4">
-            <Sparkles className="h-4 w-4 text-[#0a66c2]" /> AI Suggested Mentors
-            {matchLoading && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
-          </h3>
-          
-          <div className="space-y-4">
-            {mentorMatches.length > 0 ? (
-              mentorMatches.slice(0, 3).map((match) => (
-                <div key={match.mentor_id} className="flex gap-3 group">
-                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 flex-shrink-0 flex items-center justify-center">
-                    <span className="text-[#0a66c2] font-bold text-sm">
-                      {match.name.split(' ').map(n => n[0]).join('')}
-                    </span>
+        {/* AI Suggested Matches - Only for Startups */}
+        {userProfile?.role === 'Startup' && (
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2 mb-4">
+              <Sparkles className="h-4 w-4 text-[#0a66c2]" /> AI Suggested Mentors
+              {matchLoading && <Loader2 className="h-3 w-3 animate-spin text-gray-400" />}
+            </h3>
+            
+            <div className="space-y-4">
+              {mentorMatches.length > 0 ? (
+                mentorMatches.slice(0, 3).map((match) => (
+                  <div key={match.mentor_id} className="flex gap-3 group">
+                    <div className="h-10 w-10 rounded-full bg-gradient-to-br from-blue-100 to-blue-50 flex-shrink-0 flex items-center justify-center">
+                      <span className="text-[#0a66c2] font-bold text-sm">
+                        {match.name.split(' ').map(n => n[0]).join('')}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900 leading-tight group-hover:text-[#0a66c2] transition-colors">{match.name}</p>
+                      <p className="text-xs text-gray-500 line-clamp-1">{match.skills_summary || 'Expert Mentor'}</p>
+                      <p className="text-xs font-medium text-green-600 mt-1">{Math.round(match.similarity * 100)}% Match</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900 leading-tight group-hover:text-[#0a66c2] transition-colors">{match.name}</p>
-                    <p className="text-xs text-gray-500 line-clamp-1">{match.skills_summary || 'Expert Mentor'}</p>
-                    <p className="text-xs font-medium text-green-600 mt-1">{Math.round(match.similarity * 100)}% Match</p>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <>
-                <div className="flex gap-3">
-                  <div className="h-10 w-10 rounded-full bg-gray-200 flex-shrink-0"></div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900 leading-tight">Sarah Lim</p>
-                    <p className="text-xs text-gray-500 line-clamp-1">Ex-VP Sales at TechCorp | B2B Scaling</p>
-                    <p className="text-xs font-medium text-green-600 mt-1">92% Match (Enterprise Sales)</p>
-                  </div>
-                </div>
-                <div className="flex gap-3">
-                  <div className="h-10 w-10 rounded-full bg-gray-200 flex-shrink-0"></div>
-                  <div>
-                    <p className="text-sm font-semibold text-gray-900 leading-tight">Khairul Anwar</p>
-                    <p className="text-xs text-gray-500 line-clamp-1">AI Solutions Architect</p>
-                    <p className="text-xs font-medium text-green-600 mt-1">88% Match (AI Infrastructure)</p>
-                  </div>
-                </div>
-              </>
+                ))
+              ) : !matchLoading ? (
+                <p className="text-xs text-gray-500">No AI matches available yet. Update your challenges to get mentor recommendations.</p>
+              ) : null}
+            </div>
+            
+            {mentorMatches.length > 0 && (
+              <button className="w-full mt-4 text-sm font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-50 py-1.5 rounded-md transition-colors">
+                View all recommendations
+              </button>
             )}
           </div>
-          
-          <button className="w-full mt-4 text-sm font-semibold text-gray-500 hover:text-gray-900 hover:bg-gray-50 py-1.5 rounded-md transition-colors">
-            View all recommendations
-          </button>
-        </div>
+        )}
 
-        {/* Governance Alert */}
+        {/* Welcome Card for Mentors/Partners */}
+        {(userProfile?.role === 'Mentor' || userProfile?.role === 'Partner') && (
+          <div className="bg-white rounded-lg border border-gray-200 p-4">
+            <h3 className="text-sm font-semibold text-gray-900 mb-2">
+              Welcome, {displayName}
+            </h3>
+            <p className="text-xs text-gray-500">
+              {userProfile.role === 'Mentor'
+                ? 'You will see startup linkage requests and mentorship opportunities here once available.'
+                : 'Your partner resources and startup engagement metrics will appear here.'}
+            </p>
+          </div>
+        )}
+
+        {/* Governance Alert - contextual */}
         <div className="bg-orange-50 rounded-lg border border-orange-200 p-4">
            <h3 className="text-sm font-semibold text-orange-800 flex items-center gap-2 mb-2">
             <AlertCircle className="h-4 w-4" /> Attention Required
           </h3>
           <p className="text-xs text-orange-700">
-            Your linkage with Mentor <strong>Johari</strong> has not had a recorded interaction in 14 days. Health score is declining.
+            Check your active linkages for any interactions that may need a follow-up.
           </p>
-          <button
-            onClick={handleLogInteraction}
-            disabled={logStatus === 'logging'}
-            className="mt-2 text-xs font-semibold bg-white border border-orange-200 text-orange-700 px-3 py-1 rounded-md shadow-sm hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1"
-          >
-            {logStatus === 'logging' ? (
-              <><Loader2 className="h-3 w-3 animate-spin" /> Logging...</>
-            ) : logStatus === 'success' ? (
-              <><CheckCircle className="h-3 w-3 text-green-600" /> Logged!</>
-            ) : (
-              <><Send className="h-3 w-3" /> Log Interaction</>
-            )}
-          </button>
+          {userProfile?.role === 'Startup' && (
+            <button
+              onClick={handleLogInteraction}
+              disabled={logStatus === 'logging'}
+              className="mt-2 text-xs font-semibold bg-white border border-orange-200 text-orange-700 px-3 py-1 rounded-md shadow-sm hover:bg-orange-100 disabled:opacity-50 flex items-center gap-1"
+            >
+              {logStatus === 'logging' ? (
+                <><Loader2 className="h-3 w-3 animate-spin" /> Logging...</>
+              ) : logStatus === 'success' ? (
+                <><CheckCircle className="h-3 w-3 text-green-600" /> Logged!</>
+              ) : (
+                <><Send className="h-3 w-3" /> Log Interaction</>
+              )}
+            </button>
+          )}
         </div>
       </div>
     </div>

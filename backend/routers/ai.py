@@ -16,6 +16,12 @@ from schemas import (
 from database import get_supabase_client
 from config import get_settings
 
+import logging  # 导入日志库
+import json
+import base64
+from google.genai import types
+
+
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
@@ -88,8 +94,8 @@ async def match_mentors(request: MatchRequest):
 
 @router.post("/verify-ssm", response_model=SSMVerifyResponse)
 async def verify_ssm(
-    startup_id: str,
     file: UploadFile = File(..., description="SSM certificate image or PDF"),
+    startup_id: str | None = None,
 ):
     """
     Verify a startup's SSM (Suruhanjaya Syarikat Malaysia) certificate
@@ -119,22 +125,17 @@ async def verify_ssm(
         client = _get_gemini_client()
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-3-flash-preview",
             contents=[
-                types.Content(
-                    parts=[
-                        types.Part.from_bytes(
-                            data=file_content,
-                            mime_type=content_type,
-                        ),
-                        types.Part.from_text(
-                            "Please extract the Company Name and SSM Registration Number "
-                            "from this Malaysian SSM certificate. Respond in JSON format "
-                            'with keys: "company_name" and "registration_number". '
-                            "If you cannot extract the information, set the values to null."
-                        ),
-                    ]
-                )
+                # 1. 图片部分
+                types.Part.from_bytes(
+                    data=file_content,
+                    mime_type=content_type,
+                ),
+                # 2. 文本提示词部分 (直接传字符串，不要用 from_text)
+                "Please extract the Company Name and SSM Registration Number "
+                "from this Malaysian SSM certificate. Respond in JSON format "
+                'with keys: "company_name" and "registration_number".'
             ],
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -163,10 +164,11 @@ async def verify_ssm(
             message = "Could not fully extract certificate details. Manual review required."
             confidence = 0.3
 
-        # Step 4: Update startup verification status in Supabase
-        supabase.table("startups").update(
-            {"verification_status": status.value}
-        ).eq("id", startup_id).execute()
+        # Step 4: Update startup verification status in Supabase if ID provided
+        if startup_id:
+            supabase.table("startups").update(
+                {"verification_status": status.value}
+            ).eq("id", startup_id).execute()
 
         return SSMVerifyResponse(
             company_name=company_name,
