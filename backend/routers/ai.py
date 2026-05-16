@@ -1,13 +1,12 @@
 """
-AI-related API endpoints:
-- Semantic mentor matching via pgvector
-- SSM certificate verification via LLM Vision OCR
-- Nudge email generation for at-risk linkages
+AI-related API endpoints (powered by Google Gemini):
+- Semantic mentor matching via pgvector + Gemini Embeddings
+- SSM certificate verification via Gemini Vision OCR
+- Nudge email generation for at-risk linkages via Gemini Chat
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException
 from datetime import datetime
-import json
 
 from schemas import (
     MatchRequest, MatchResponse, MentorMatch,
@@ -20,26 +19,36 @@ from config import get_settings
 router = APIRouter(prefix="/api/ai", tags=["AI"])
 
 
+def _get_gemini_client():
+    """Create a Google GenAI client configured with API key."""
+    from google import genai
+    settings = get_settings()
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+    return client
+
+
 @router.post("/match", response_model=MatchResponse)
 async def match_mentors(request: MatchRequest):
     """
     Generate an embedding for the startup's needs text and find the best
     mentor matches using pgvector cosine similarity in Supabase.
+
+    Flow:
+    1. Call Gemini Embeddings API to vectorize the needs_text.
+    2. Call the `match_mentors_to_startup` Postgres RPC via Supabase.
+    3. Return ranked mentor matches.
     """
-    settings = get_settings()
     supabase = get_supabase_client()
 
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=settings.GEMINI_API_KEY)
-
         # Step 1: Generate embedding via Gemini
-        embedding_response = genai.embed_content(
-            model="models/text-embedding-004",
-            content=request.needs_text,
-            task_type="semantic_similarity"
+        client = _get_gemini_client()
+
+        embedding_response = client.models.embed_content(
+            model="text-embedding-004",
+            contents=request.needs_text,
         )
-        query_embedding = embedding_response['embedding']
+        query_embedding = embedding_response.embeddings[0].values
 
         # Step 2: Call Supabase RPC for pgvector similarity search
         result = supabase.rpc(
@@ -55,8 +64,8 @@ async def match_mentors(request: MatchRequest):
         matches = [
             MentorMatch(
                 mentor_id=row["mentor_id"],
-                name=row.get("mentor_name", "Unknown"),
-                skills_summary=" \u2022 ".join(row.get("expertise_skills", [])),
+                name=row.get("name", "Unknown"),
+                skills_summary=row.get("bio"),
                 similarity=row["similarity"],
             )
             for row in (result.data or [])
@@ -78,37 +87,64 @@ async def verify_ssm(
     file: UploadFile = File(..., description="SSM certificate image or PDF"),
 ):
     """
-    Verify a startup's SSM certificate using Gemini Vision API for OCR extraction.
+    Verify a startup's SSM (Suruhanjaya Syarikat Malaysia) certificate
+    using Gemini Vision API for OCR extraction.
+
+    Flow:
+    1. Read the uploaded certificate file.
+    2. Send to Gemini Vision to extract Company Name and Registration Number.
+    3. Update the startup's verification_status in Supabase.
+    4. Return extraction results.
     """
-    settings = get_settings()
     supabase = get_supabase_client()
 
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+        import base64
+        import json
+        from google.genai import types
 
+        # Step 1: Read and encode the uploaded file
         file_content = await file.read()
-        content_type = file.content_type or "image/jpeg"
+        base64_image = base64.b64encode(file_content).decode("utf-8")
 
-        model = genai.GenerativeModel(
-            'gemini-1.5-flash',
-            generation_config={"response_mime_type": "application/json"}
+        # Determine MIME type
+        content_type = file.content_type or "image/png"
+
+        # Step 2: Call Gemini Vision API for OCR
+        client = _get_gemini_client()
+
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                types.Content(
+                    parts=[
+                        types.Part.from_bytes(
+                            data=file_content,
+                            mime_type=content_type,
+                        ),
+                        types.Part.from_text(
+                            "Please extract the Company Name and SSM Registration Number "
+                            "from this Malaysian SSM certificate. Respond in JSON format "
+                            'with keys: "company_name" and "registration_number". '
+                            "If you cannot extract the information, set the values to null."
+                        ),
+                    ]
+                )
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=500,
+                system_instruction=(
+                    "You are an OCR specialist for Malaysian business documents. "
+                    "Extract the Company Name and SSM Registration Number from the "
+                    "provided certificate image. Always respond in valid JSON."
+                ),
+            ),
         )
 
-        prompt = (
-            "You are an OCR specialist for Malaysian business documents. "
-            "Extract the Company Name and SSM Registration Number from this "
-            "certificate image. Respond in JSON format with keys: "
-            '"company_name" and "registration_number". '
-            "If you cannot extract the information, set the values to null."
-        )
+        # Step 3: Parse Gemini response
+        extracted = json.loads(response.text)
 
-        vision_response = model.generate_content([
-            {"mime_type": content_type, "data": file_content},
-            prompt
-        ])
-
-        extracted = json.loads(vision_response.text)
         company_name = extracted.get("company_name")
         registration_number = extracted.get("registration_number")
 
@@ -122,7 +158,7 @@ async def verify_ssm(
             message = "Could not fully extract certificate details. Manual review required."
             confidence = 0.3
 
-        # Update startup verification status in Supabase
+        # Step 4: Update startup verification status in Supabase
         supabase.table("startups").update(
             {"verification_status": status.value}
         ).eq("id", startup_id).execute()
@@ -143,34 +179,41 @@ async def verify_ssm(
 async def generate_nudge(request: NudgeRequest):
     """
     Generate a context-aware nudge email for an at-risk linkage using Gemini.
-    """
-    settings = get_settings()
 
+    The system generates a professional, Malaysian-compliant check-in email
+    when a mentorship linkage's health score drops below the threshold.
+    """
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+        import json
+        from google.genai import types
+
+        client = _get_gemini_client()
 
         days_since = (datetime.utcnow() - request.last_interaction_date).days
         topic_context = f" regarding {request.topic}" if request.topic else ""
 
-        model = genai.GenerativeModel(
-            'gemini-1.5-flash',
-            generation_config={"response_mime_type": "application/json"}
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                f"Mentor Name: {request.mentor_name}\n"
+                f"Startup Name: {request.startup_name}\n"
+                f"Last Interaction: {days_since} days ago{topic_context}\n"
+                f"Please generate a professional check-in email."
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                max_output_tokens=800,
+                system_instruction=(
+                    "You are an ecosystem coordinator for Cradle, Malaysia's leading "
+                    "innovation agency. Write a polite, highly professional check-in "
+                    "email to a mentor. Comply strictly with Malaysian professional "
+                    "etiquette. The email should be warm but not pushy. "
+                    "Output a JSON object with 'subject' and 'body' keys."
+                ),
+            ),
         )
 
-        prompt = (
-            "You are an ecosystem coordinator for Cradle, Malaysia's leading "
-            "innovation agency. Write a polite, highly professional check-in "
-            "email to a mentor. Comply strictly with Malaysian professional "
-            "etiquette. The email should be warm but not pushy.\n\n"
-            f"Mentor Name: {request.mentor_name}\n"
-            f"Startup Name: {request.startup_name}\n"
-            f"Last Interaction: {days_since} days ago{topic_context}\n\n"
-            "Output a JSON object with exactly two keys: 'subject' and 'body'."
-        )
-
-        completion = model.generate_content(prompt)
-        email_content = json.loads(completion.text)
+        email_content = json.loads(response.text)
 
         return NudgeResponse(
             linkage_id=request.linkage_id,
